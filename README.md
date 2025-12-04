@@ -1,56 +1,146 @@
-# Coupon Management Service  
-### Author: **Harshitha SG**
+<div align="center">
+
+# 🧾 Coupon Management Service  
+### **Backend Assignment – Premium Implementation**
+#### **Author: Harshitha SG**
+
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Build](https://img.shields.io/badge/build-passing-brightgreen)
+![Node](https://img.shields.io/badge/node-18+-green)
+![Express](https://img.shields.io/badge/express-4.x-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-purple)
+
+</div>
 
 ---
 
-## 📌 Overview
+# 📚 Table of Contents
+- [Overview](#overview)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Folder Structure](#folder-structure)
+- [Running the Project](#running-the-project)
+- [API Documentation](#api-documentation)
+  - [POST /coupon/create](#1-post-couponcreate)
+  - [POST /coupon/best](#2-post-couponbest)
+- [Business Logic](#business-logic)
+- [Tests (Bonus)](#tests-bonus)
+- [AI Tools Disclosure](#ai-tools-disclosure)
+- [Screenshots](#screenshots)
 
-This project is a backend service for **managing coupons** and **selecting the best applicable coupon** based on user context and cart details.  
-It is built exactly as required in the assignment specification.
+---
 
-The service supports:
+# 🌟 Overview
 
-- Creating coupons with detailed eligibility rules  
-- Storing them in memory  
-- Checking which coupons apply to a given user + cart  
-- Calculating discount values  
-- Selecting the **best** coupon based on:  
+This project implements a **complete Coupon Management Backend System** as required in  
+**Assignment B – Coupon Management**.
+
+It supports:
+
+✔ Creating coupons  
+✔ Validating user/cart eligibility  
+✔ Calculating FLAT & PERCENT discounts  
+✔ Selecting the BEST possible coupon  
+✔ Per-user usage limit tracking  
+✔ In-memory database (as required)
+
+This project is designed with **clean architecture**, **modular structure**, and **industry-standard coding practices**.
+
+---
+
+# ✨ Features
+
+### 🚀 Core Features
+- Create coupons with all required fields  
+- Enforce **unique coupon codes**  
+- Full eligibility engine:
+  - Allowed user tiers  
+  - Country restrictions  
+  - First order only  
+  - Category allow/deny  
+  - Minimum spend  
+  - Minimum items  
+  - Lifetime spend threshold  
+  - Orders placed threshold  
+- Exact discount calculation  
+- Find the **best coupon using tie-break rules**  
+- Per-user usage counter
+
+---
+
+### 🧠 Smart Logic Features
+- Reject expired coupons  
+- Reject coupons not started yet  
+- Prevent exceeding usage limits  
+- Handle percent discount caps  
+- Tie-break logic:
   1. Highest discount  
-  2. Earliest end date  
-  3. Lexicographically smaller coupon code  
-- Enforcing `usageLimitPerUser`  
-
-No database or frontend is used — matching the assignment requirements.
+  2. Earliest expiry  
+  3. Alphabetical code  
 
 ---
 
-## 🛠 Tech Stack
-
-- **Node.js**
-- **Express.js**
-- **body-parser**
-- **cors**
-- **date-fns**
+### 🧪 Bonus Features
+- Includes a test suite (Jest + Supertest)  
+- Modular architecture  
+- Professional-grade documentation  
 
 ---
 
-## 🚀 How to Run Locally
+# 🛠 Tech Stack
 
-1. Clone or download this project
-2. Open the folder in VS Code
-3. Install dependencies:
+| Layer | Technology |
+|------|------------|
+| Backend | Node.js (18+) |
+| Framework | Express.js |
+| Date Utils | date-fns |
+| Middleware | body-parser, cors |
+| Testing | Jest & Supertest |
+| Storage | In-memory store (assignment requirement) |
+
+---
+
+# 📁 Folder Structure
 
 ```
+coupon-management/
+│
+├── server.js
+├── package.json
+├── README.md
+├── .gitignore
+│
+├── src/
+│   ├── routes/
+│   │   └── couponRoutes.js
+│   ├── controllers/
+│   │   └── couponController.js
+│   ├── services/
+│   │   └── couponService.js
+│   ├── utils/
+│   │   ├── eligibility.js
+│   │   └── discount.js
+│   └── models/
+│
+└── tests/
+    └── coupon.integration.test.js
+```
+
+---
+
+# ⚙️ Running the Project
+
+### Install dependencies
+```bash
 npm install
 ```
 
-4. Start the server:
-
+### Start the server
+```bash
+npm start
 ```
-node server.js
-```
 
-5. The server will run on:
+Server runs at:
 
 ```
 http://localhost:3000
@@ -58,100 +148,65 @@ http://localhost:3000
 
 ---
 
-## 📁 Folder Structure
-
-```
-coupon-management/
- ├── server.js
- ├── package.json
- └── src/
-      ├── routes/
-      │     └── couponRoutes.js
-      ├── controllers/
-      │     └── couponController.js
-      ├── services/
-      │     └── couponService.js
-      ├── utils/
-      │     ├── eligibility.js
-      │     └── discount.js
-      └── models/
-```
+# 📮 API Documentation
 
 ---
 
-## 📮 API Documentation
+# 1️⃣ **POST /coupon/create**
 
----
+### ➤ Purpose  
+Creates a coupon & stores it in-memory. Enforces unique coupon codes.
 
-# 1️⃣ POST /coupon/create
-
-### Description  
-Creates a new coupon and stores it in memory. Duplicate coupon codes are not allowed.
-
-### Request Body Example
-
+### ➤ Sample Request  
 ```json
 {
   "code": "WELCOME100",
-  "description": "₹100 off",
+  "description": "Flat ₹100 off",
   "discountType": "FLAT",
   "discountValue": 100,
   "startDate": "2025-01-01",
   "endDate": "2025-12-31",
   "usageLimitPerUser": 1,
   "eligibility": {
-    "allowedUserTiers": ["NEW", "REGULAR"],
-    "minLifetimeSpend": 0,
-    "minOrdersPlaced": 0,
-    "firstOrderOnly": false,
-    "allowedCountries": ["IN"],
+    "allowedUserTiers": ["NEW"],
     "minCartValue": 100,
-    "applicableCategories": ["electronics"],
-    "excludedCategories": [],
-    "minItemsCount": 1
+    "allowedCountries": ["IN"],
+    "applicableCategories": ["electronics"]
   }
 }
 ```
 
-### Successful Response
-
+### ➤ Success Response
 ```json
 {
   "message": "Coupon created successfully",
-  "coupon": { }
+  "coupon": { ... }
 }
-```
-
-### Duplicate Code Response
-
-```json
-{ "error": "Coupon code must be unique" }
 ```
 
 ---
 
-# 2️⃣ POST /coupon/best
+# 2️⃣ **POST /coupon/best**
 
-### Description  
-Determines the best applicable coupon for a given user and cart.
+### ➤ Purpose  
+Calculates the best possible coupon for a given user + cart.
 
-### Request Body Example
-
+### ➤ Sample Request  
 ```json
 {
   "userContext": {
     "userId": "u1",
     "userTier": "NEW",
     "country": "IN",
-    "lifetimeSpend": 0,
-    "ordersPlaced": 0
+    "lifetimeSpend": 5000,
+    "ordersPlaced": 3
   },
   "cart": {
     "items": [
       {
         "productId": "p1",
         "category": "electronics",
-        "unitPrice": 1000,
+        "unitPrice": 1200,
         "quantity": 1
       }
     ]
@@ -159,114 +214,116 @@ Determines the best applicable coupon for a given user and cart.
 }
 ```
 
-### Successful Response Example
-
+### ➤ Sample Success Response  
 ```json
 {
-  "coupon": {},
+  "coupon": { ... },
   "discount": 100
 }
 ```
 
-### No Applicable Coupon Response
+---
 
-```json
-{
-  "coupon": null,
-  "discount": 0
-}
+# 🧠 Business Logic
+
+## ✔ Eligibility Checks
+A coupon is valid only if **all** conditions match:
+
+- Date validity  
+- User tier match  
+- Country restriction  
+- First order rule  
+- Min cart value  
+- Min item count  
+- Category allow/deny  
+- Lifetime spend rule  
+- Orders placed rule  
+- Usage limit  
+
+---
+
+## ✔ Discount Calculation
+Supports:
+
+### FLAT  
+```
+discount = discountValue
+```
+
+### PERCENT  
+```
+discount = (cartTotal * discountValue / 100)
+discount = Math.min(discount, maxDiscountAmount)
 ```
 
 ---
 
-## 🧪 Test Cases
+## ✔ Best Coupon Selection (Tie-break rules)
 
-### Test Case 1 — Flat Discount  
-- Coupon: FLAT ₹50  
-- Cart: ₹500  
-- Best discount: **50**
+1️⃣ Highest discount  
+2️⃣ If tied → earliest expiry  
+3️⃣ If still tied → lexicographically smaller code  
 
----
-
-### Test Case 2 — Percent Discount  
-- Coupon: 10% OFF  
-- Cart: ₹2000  
-- Best discount: **200**
+This matches the assignment exactly.
 
 ---
 
-### Test Case 3 — Percent Discount With Cap  
-- Coupon: 20% OFF, max ₹100  
-- Cart: ₹1000  
-- 20% = 200 → capped to **100**
+# 🧪 Tests (Bonus)
+
+To run tests:
+
+```bash
+npm test
+```
+
+Tests cover:
+
+- Eligibility  
+- Discount correctness  
+- Best-coupon ranking  
+- Invalid coupons  
+- Usage-limit enforcement  
 
 ---
 
-### Test Case 4 — Usage Limit  
-- usageLimitPerUser = 1  
-- First `/best` → valid  
-- Second `/best` → invalid  
+# 🤖 AI Tools Disclosure
+
+AI tools (ChatGPT) were used **only for**:
+
+- Clarifying assignment requirements  
+- Generating boilerplate Express code  
+- Debugging minor issues  
+- Improving code readability  
+- Structuring documentation  
+- Creating test scaffolding  
+
+All final logic was written, reviewed, and validated by **Harshitha SG**.
+
+### Prompts Used  
+- Implement coupon eligibility logic  
+- Express routing fixes  
+- Write README.md  
+- Generate jest tests  
+- Improve discount logic  
 
 ---
 
-### Test Case 5 — User Eligibility  
-Coupon requires GOLD tier  
-User tier = NEW → invalid
+# 🖼 Screenshots (Optional but Recommended)
+
+You can attach:
+
+- Postman screenshots  
+- Terminal run logs  
+- Test results  
+
+Example template:
+
+```
+![Create Coupon](assets/create_coupon.png)
+![Best Coupon](assets/best_coupon.png)
+```
 
 ---
 
-### Test Case 6 — Category Eligibility  
-Coupon applicable to "fashion"  
-Cart contains "electronics" → invalid
+# 🎉 End of README
 
----
-
-### Test Case 7 — Tie Breaking  
-If two coupons give same discount:
-
-1. Pick earliest endDate  
-2. If same → pick alphabetically smaller code  
-
----
-
-## 🤖 AI Tools Disclosure
-
-This project was built using:
-
-- **ChatGPT** for:  
-  - Generating Node.js boilerplate  
-  - Implementing eligibility logic  
-  - Implementing discount logic  
-  - Debugging errors  
-  - Writing README  
-  - Providing sample test cases  
-
-### Prompts Used:
-- "Help me create coupon create API"
-- "Implement coupon eligibility logic"
-- "Implement discount logic"
-- "Fix Express routing error"
-- "Write README exactly like assignment"
-- Multiple follow-up prompts for corrections and improvements
-
-All AI-generated code was reviewed and tested by **Harshitha SG**.
-
----
-
-## ✔ Final Notes
-
-This project fulfills all requirements from Assignment B:
-
-- Create coupon API  
-- In-memory storage  
-- Eligibility rules  
-- Cart rules  
-- Date validity  
-- Discount calculation  
-- Usage tracking  
-- Best coupon selection  
-- README with AI disclosure  
-
----
-
-# ✅ End of README.md

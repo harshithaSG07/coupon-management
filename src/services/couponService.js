@@ -1,191 +1,230 @@
-const { parseISO, isBefore, isAfter } = require("date-fns");
+const { parseISO, isBefore, isAfter } = require('date-fns');
 
-let coupons = [];
-let usagePerUser = {}; // { userId: { couponCode: count } }
+/**
+ * In-memory store for coupons.
+ * Structure of a coupon:
+ * {
+ *   code, description, discountType('FLAT'|'PERCENT'), discountValue, maxDiscountAmount (number|null),
+ *   startDate (ISO string), endDate (ISO string), usageLimitPerUser (number|null),
+ *   eligibility: { allowedUserTiers, minLifetimeSpend, minOrdersPlaced, firstOrderOnly, allowedCountries,
+ *                  minCartValue, applicableCategories, excludedCategories, minItemsCount }
+ *   usagePerUser: { userId: count }  // internally added
+ * }
+ */
+const coupons = [];
 
-// -------------------------
-//  VALIDATION
-// -------------------------
-function validateCouponInput(data) {
-  const requiredFields = [
-    "code",
-    "description",
-    "discountType",
-    "discountValue",
-    "startDate",
-    "endDate",
-    "eligibility"
-  ];
+/* -------------------------
+   Validation helpers
+   ------------------------- */
+function isValidDateString(s) {
+  if (!s) return false;
+  const d = Date.parse(s);
+  return !isNaN(d);
+}
 
-  for (let field of requiredFields) {
-    if (!data[field]) {
-      return `Missing field: ${field}`;
+function validateCreatePayload(data) {
+  if (!data) return 'Request body is required';
+  if (!data.code || typeof data.code !== 'string') return 'code is required (string)';
+  if (!data.discountType || !['FLAT', 'PERCENT'].includes(data.discountType))
+    return "discountType is required and must be 'FLAT' or 'PERCENT'";
+  if (typeof data.discountValue !== 'number' || data.discountValue <= 0)
+    return 'discountValue must be a positive number';
+  if (!isValidDateString(data.startDate) || !isValidDateString(data.endDate))
+    return 'startDate and endDate must be valid ISO date strings';
+  // optional checks - eligibility object present (allow empty)
+  if (data.eligibility && typeof data.eligibility !== 'object') return 'eligibility must be an object';
+  // maxDiscountAmount for PERCENT should be number if provided
+  if (data.discountType === 'PERCENT' && data.maxDiscountAmount != null) {
+    if (typeof data.maxDiscountAmount !== 'number' || data.maxDiscountAmount < 0) {
+      return 'maxDiscountAmount must be a non-negative number';
     }
   }
-
-  if (!["FLAT", "PERCENT"].includes(data.discountType)) {
-    return "Invalid discountType. Use 'FLAT' or 'PERCENT'.";
+  // usageLimitPerUser if provided must be positive integer
+  if (data.usageLimitPerUser != null) {
+    if (!Number.isInteger(data.usageLimitPerUser) || data.usageLimitPerUser < 1) {
+      return 'usageLimitPerUser must be an integer >= 1';
+    }
   }
-
-  if (data.discountValue <= 0) {
-    return "discountValue must be positive.";
-  }
-
-  if (data.discountType === "PERCENT" && data.discountValue > 100) {
-    return "Percent discount cannot exceed 100%.";
-  }
-
-  if (isNaN(Date.parse(data.startDate)) || isNaN(Date.parse(data.endDate))) {
-    return "Invalid startDate or endDate.";
-  }
-
   return null;
 }
 
-// -------------------------
-//  CREATE COUPON
-// -------------------------
-function createCoupon(data) {
-  const validationError = validateCouponInput(data);
-  if (validationError) {
-    return { error: validationError };
-  }
+/* -------------------------
+   Core functions
+   ------------------------- */
 
-  const exists = coupons.find(c => c.code === data.code);
-  if (exists) {
-    return { error: "Coupon code must be unique." };
-  }
+function createCoupon(data) {
+  const err = validateCreatePayload(data);
+  if (err) return { error: err };
+
+  // Unique code
+  const exists = coupons.find((c) => c.code === data.code);
+  if (exists) return { error: 'Coupon code must be unique' };
 
   const coupon = {
-    ...data,
-    startDate: parseISO(data.startDate),
-    endDate: parseISO(data.endDate),
-    createdAt: new Date(),
-    usageLimitPerUser: data.usageLimitPerUser || 1,
+    code: data.code,
+    description: data.description || '',
+    discountType: data.discountType,
+    discountValue: data.discountValue,
+    maxDiscountAmount: data.maxDiscountAmount != null ? data.maxDiscountAmount : null,
+    startDate: data.startDate, // keep ISO string for readability
+    endDate: data.endDate,
+    usageLimitPerUser: data.usageLimitPerUser != null ? data.usageLimitPerUser : null,
+    eligibility: data.eligibility || {},
+    usagePerUser: {} // internal tracking: { userId: count }
   };
 
   coupons.push(coupon);
   return coupon;
 }
 
-// -------------------------
-//  ELIGIBILITY CHECK
-// -------------------------
-function isCouponEligible(coupon, user, cartValue, categories, itemsCount) {
+/* compute cart value and categories */
+function computeCartDetails(cart) {
+  const items = Array.isArray(cart.items) ? cart.items : [];
+  const cartValue = items.reduce((s, it) => {
+    const price = Number(it.unitPrice || 0);
+    const qty = Number(it.quantity || 0);
+    return s + price * qty;
+  }, 0);
+  const categories = items.map((i) => i.category).filter(Boolean);
+  const itemsCount = items.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+  return { cartValue, categories, itemsCount };
+}
+
+/* eligibility checks exactly as assignment */
+function checkEligibility(coupon, userContext, cart) {
+  const e = coupon.eligibility || {};
+  const { cartValue, categories, itemsCount } = computeCartDetails(cart);
+
+  // Dates: coupon.startDate <= now <= coupon.endDate
   const now = new Date();
+  const start = parseISO(coupon.startDate);
+  const end = parseISO(coupon.endDate);
+  if (isAfter(start, now)) return false; // not started
+  if (isBefore(end, now)) return false; // expired
 
-  // Date validity
-  if (isBefore(now, coupon.startDate) || isAfter(now, coupon.endDate)) {
-    return false;
+  // usage per user
+  if (coupon.usageLimitPerUser != null) {
+    const used = coupon.usagePerUser[userContext.userId] || 0;
+    if (used >= coupon.usageLimitPerUser) return false;
   }
 
-  const e = coupon.eligibility;
-
-  if (e.allowedUserTiers && !e.allowedUserTiers.includes(user.userTier)) {
-    return false;
+  // User-based checks
+  if (Array.isArray(e.allowedUserTiers) && e.allowedUserTiers.length > 0) {
+    if (!e.allowedUserTiers.includes(userContext.userTier)) return false;
   }
 
-  if (user.lifetimeSpend < e.minLifetimeSpend) return false;
-  if (user.ordersPlaced < e.minOrdersPlaced) return false;
-
-  if (e.firstOrderOnly && user.ordersPlaced > 0) return false;
-
-  if (e.allowedCountries && !e.allowedCountries.includes(user.country)) {
-    return false;
+  if (typeof e.minLifetimeSpend === 'number') {
+    if ((userContext.lifetimeSpend || 0) < e.minLifetimeSpend) return false;
   }
 
-  if (cartValue < e.minCartValue) return false;
-
-  if (e.applicableCategories?.length > 0) {
-    const match = categories.some(cat => e.applicableCategories.includes(cat));
-    if (!match) return false;
+  if (typeof e.minOrdersPlaced === 'number') {
+    if ((userContext.ordersPlaced || 0) < e.minOrdersPlaced) return false;
   }
 
-  if (e.excludedCategories?.length > 0) {
-    const conflict = categories.some(cat => e.excludedCategories.includes(cat));
+  if (e.firstOrderOnly === true) {
+    if ((userContext.ordersPlaced || 0) !== 0) return false;
+  }
+
+  if (Array.isArray(e.allowedCountries) && e.allowedCountries.length > 0) {
+    if (!e.allowedCountries.includes(userContext.country)) return false;
+  }
+
+  // Cart-based checks
+  if (typeof e.minCartValue === 'number') {
+    if (cartValue < e.minCartValue) return false;
+  }
+
+  if (Array.isArray(e.applicableCategories) && e.applicableCategories.length > 0) {
+    // coupon applies only if cart contains at least one applicable category
+    const found = categories.some((c) => e.applicableCategories.includes(c));
+    if (!found) return false;
+  }
+
+  if (Array.isArray(e.excludedCategories) && e.excludedCategories.length > 0) {
+    // coupon invalid if any excluded category present
+    const conflict = categories.some((c) => e.excludedCategories.includes(c));
     if (conflict) return false;
   }
 
-  if (itemsCount < e.minItemsCount) return false;
-
-  // Usage limit check
-  const usedCount = usagePerUser?.[user.userId]?.[coupon.code] || 0;
-  if (usedCount >= coupon.usageLimitPerUser) return false;
+  if (typeof e.minItemsCount === 'number') {
+    if (itemsCount < e.minItemsCount) return false;
+  }
 
   return true;
 }
 
-// -------------------------
-//  DISCOUNT CALCULATION
-// -------------------------
-function calculateDiscount(coupon, cartValue) {
-  if (coupon.discountType === "FLAT") {
+/* discount calc */
+function calculateDiscountAmount(coupon, cart) {
+  const { cartValue } = computeCartDetails(cart);
+  if (coupon.discountType === 'FLAT') {
     return coupon.discountValue;
   }
-
-  if (coupon.discountType === "PERCENT") {
-    let discount = (coupon.discountValue / 100) * cartValue;
-    if (coupon.maxDiscount) {
-      discount = Math.min(discount, coupon.maxDiscount);
+  if (coupon.discountType === 'PERCENT') {
+    let amount = (coupon.discountValue / 100) * cartValue;
+    if (coupon.maxDiscountAmount != null) {
+      amount = Math.min(amount, coupon.maxDiscountAmount);
     }
-    return discount;
+    return amount;
   }
-
   return 0;
 }
 
-// -------------------------
-//  FIND BEST COUPON
-// -------------------------
+/* find best coupon: highest discount -> earliest endDate -> lexicographically smaller code */
 function findBestCoupon(userContext, cart) {
-  const cartValue = cart.items.reduce(
-    (sum, item) => sum + item.unitPrice * item.quantity,
-    0
-  );
+  // basic validation
+  if (!userContext || !cart) return { coupon: null, discount: 0 };
 
-  const categories = cart.items.map(item => item.category);
-  const itemsCount = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+  const candidates = [];
 
-  let best = null;
-
-  for (let c of coupons) {
-    if (!isCouponEligible(c, userContext, cartValue, categories, itemsCount)) {
+  for (const c of coupons) {
+    try {
+      if (!checkEligibility(c, userContext, cart)) continue;
+      const discount = calculateDiscountAmount(c, cart);
+      if (discount <= 0) continue;
+      candidates.push({ coupon: c, discount });
+    } catch (err) {
+      // skip coupon on unexpected errors
       continue;
     }
-
-    const discount = calculateDiscount(c, cartValue);
-    if (discount <= 0) continue;
-
-    if (!best) {
-      best = { coupon: c, discount };
-    } else {
-      if (discount > best.discount) {
-        best = { coupon: c, discount };
-      } else if (discount === best.discount) {
-        if (isBefore(c.endDate, best.coupon.endDate)) {
-          best = { coupon: c, discount };
-        } else if (
-          c.endDate.getTime() === best.coupon.endDate.getTime() &&
-          c.code < best.coupon.code
-        ) {
-          best = { coupon: c, discount };
-        }
-      }
-    }
   }
 
-  if (best) {
-    if (!usagePerUser[userContext.userId]) {
-      usagePerUser[userContext.userId] = {};
-    }
-    usagePerUser[userContext.userId][best.coupon.code] =
-      (usagePerUser[userContext.userId][best.coupon.code] || 0) + 1;
-  }
+  if (candidates.length === 0) return { coupon: null, discount: 0 };
 
-  return best ? best : null;
+  // sort by discount DESC, endDate ASC, code ASC
+  candidates.sort((a, b) => {
+    if (b.discount !== a.discount) return b.discount - a.discount;
+    const aEnd = parseISO(a.coupon.endDate).getTime();
+    const bEnd = parseISO(b.coupon.endDate).getTime();
+    if (aEnd !== bEnd) return aEnd - bEnd;
+    return a.coupon.code.localeCompare(b.coupon.code);
+  });
+
+  const best = candidates[0];
+
+  // Update usage count (user used this coupon once)
+  const userId = userContext.userId;
+  if (!best.coupon.usagePerUser[userId]) best.coupon.usagePerUser[userId] = 0;
+  best.coupon.usagePerUser[userId] += 1;
+
+  return { coupon: best.coupon, discount: best.discount };
 }
 
+/* helper to expose coupons for debugging/tests (not required but useful) */
+function listCoupons() {
+  // return clones to avoid accidental mutation by caller
+  return coupons.map((c) => ({ ...c }));
+}
+
+/* Export */
 module.exports = {
   createCoupon,
   findBestCoupon,
+  // exports for tests
+  _internal: {
+    coupons,
+    computeCartDetails,
+    checkEligibility,
+    calculateDiscountAmount,
+    listCoupons
+  }
 };

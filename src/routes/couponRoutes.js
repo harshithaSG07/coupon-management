@@ -1,8 +1,8 @@
-const express = require("express");
+const express = require('express');
 const router = express.Router();
-const { createCouponHandler, getBestCouponHandler } = require("../controllers/couponController");
+const controller = require('../controllers/couponController');
 
-router.post("/create", createCouponHandler);
-router.post("/best", getBestCouponHandler);
+router.post('/create', controller.createCouponHandler);
+router.post('/best', controller.getBestCouponHandler);
 
 module.exports = router;

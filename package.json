@@ -1,16 +1,20 @@
 {
   "name": "coupon-management",
   "version": "1.0.0",
+  "description": "Assignment B - Coupon Management (Node.js + Express)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "jest"
+    "dev": "NODE_ENV=development node server.js",
+    "test": "jest --runInBand --detectOpenHandles"
   },
+  "author": "Harshitha SG",
+  "license": "MIT",
   "dependencies": {
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
-    "date-fns": "^3.1.0",
-    "express": "^4.19.2"
+    "date-fns": "^2.30.0",
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "jest": "^29.7.0",
