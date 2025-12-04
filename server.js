@@ -1,18 +1,20 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors');
+const express = require("express");
+const bodyParser = require("body-parser");
+const cors = require("cors");
+
+const couponRoutes = require("./src/routes/couponRoutes");
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-app.get('/', (req, res) => {
-  res.json({ message: 'Coupon Management API working!' });
+app.use("/coupon", couponRoutes);
+
+app.get("/", (req, res) => {
+  res.send("Coupon Management Service Running...");
 });
 
-const couponRoutes = require('./src/routes/couponRoutes');
-app.use('/coupon', couponRoutes);
+const PORT = 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-app.listen(3000, () => {
-  console.log('Server running at http://localhost:3000');
-});
+module.exports = app; // For testing

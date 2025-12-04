@@ -1,14 +1,33 @@
-const couponService = require('../services/couponService');
+const { createCoupon, findBestCoupon } = require("../services/couponService");
 
-// API 1 — Create Coupon
-exports.createCoupon = (req, res) => {
-  const result = couponService.createCoupon(req.body);
-  return res.json(result);
+exports.createCouponHandler = (req, res) => {
+  const result = createCoupon(req.body);
+
+  if (result.error) {
+    return res.status(400).json({ error: result.error });
+  }
+
+  return res.status(200).json({
+    message: "Coupon created successfully",
+    coupon: result,
+  });
 };
 
-// API 2 — Best Coupon
-exports.getBestCoupon = (req, res) => {
+exports.getBestCouponHandler = (req, res) => {
   const { userContext, cart } = req.body;
-  const result = couponService.findBestCoupon(userContext, cart);
-  return res.json(result);
+
+  if (!userContext || !cart) {
+    return res.status(400).json({ error: "Missing userContext or cart" });
+  }
+
+  const best = findBestCoupon(userContext, cart);
+
+  if (!best) {
+    return res.json({ coupon: null, discount: 0 });
+  }
+
+  res.json({
+    coupon: best.coupon,
+    discount: best.discount,
+  });
 };

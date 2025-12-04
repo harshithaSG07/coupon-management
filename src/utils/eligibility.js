@@ -1,94 +1,38 @@
-function computeCartValue(cart) {
-  if (!cart || !Array.isArray(cart.items)) return 0;
-  return cart.items.reduce((sum, item) => {
-    return sum + item.unitPrice * item.quantity;
-  }, 0);
+const { isBefore, isAfter } = require("date-fns");
+
+function isCouponEligible(coupon, user, cartValue, categories, itemsCount, usagePerUser) {
+  const now = new Date();
+  const e = coupon.eligibility;
+
+  if (isBefore(now, coupon.startDate) || isAfter(now, coupon.endDate)) return false;
+
+  if (e.allowedUserTiers && !e.allowedUserTiers.includes(user.userTier)) return false;
+  if (user.lifetimeSpend < e.minLifetimeSpend) return false;
+  if (user.ordersPlaced < e.minOrdersPlaced) return false;
+
+  if (e.firstOrderOnly && user.ordersPlaced > 0) return false;
+
+  if (e.allowedCountries && !e.allowedCountries.includes(user.country)) return false;
+
+  if (cartValue < e.minCartValue) return false;
+
+  if (e.applicableCategories?.length > 0) {
+    const match = categories.some(cat => e.applicableCategories.includes(cat));
+    if (!match) return false;
+  }
+
+  if (e.excludedCategories?.length > 0) {
+    const conflict = categories.some(cat => e.excludedCategories.includes(cat));
+    if (conflict) return false;
+  }
+
+  if (itemsCount < e.minItemsCount) return false;
+
+  // Usage-per-user check
+  const usedCount = usagePerUser?.[user.userId]?.[coupon.code] || 0;
+  if (usedCount >= coupon.usageLimitPerUser) return false;
+
+  return true;
 }
 
-function isCouponEligible(coupon, userContext, cart) {
-  const e = coupon.eligibility || {};
-
-  // -------------------------
-  // USER-BASED CHECKS
-  // -------------------------
-
-  // 1. allowedUserTiers
-  if (e.allowedUserTiers && e.allowedUserTiers.length > 0) {
-    if (!e.allowedUserTiers.includes(userContext.userTier)) {
-      return false;
-    }
-  }
-
-  // 2. minLifetimeSpend
-  if (typeof e.minLifetimeSpend === "number") {
-    if (userContext.lifetimeSpend < e.minLifetimeSpend) {
-      return false;
-    }
-  }
-
-  // 3. minOrdersPlaced
-  if (typeof e.minOrdersPlaced === "number") {
-    if (userContext.ordersPlaced < e.minOrdersPlaced) {
-      return false;
-    }
-  }
-
-  // 4. firstOrderOnly
-  if (e.firstOrderOnly === true) {
-    if (userContext.ordersPlaced !== 0) {
-      return false;
-    }
-  }
-
-  // 5. allowedCountries
-  if (e.allowedCountries && e.allowedCountries.length > 0) {
-    if (!e.allowedCountries.includes(userContext.country)) {
-      return false;
-    }
-  }
-
-  // -------------------------
-  // CART-BASED CHECKS
-  // -------------------------
-
-  const cartValue = computeCartValue(cart);
-  const categories = cart.items.map(item => item.category);
-  const totalItems = cart.items.reduce((sum, i) => sum + i.quantity, 0);
-
-  // 1. minCartValue
-  if (typeof e.minCartValue === "number") {
-    if (cartValue < e.minCartValue) {
-      return false;
-    }
-  }
-
-  // 2. applicableCategories -> must match AT LEAST ONE
-  if (e.applicableCategories && e.applicableCategories.length > 0) {
-    const found = categories.some(cat =>
-      e.applicableCategories.includes(cat)
-    );
-    if (!found) return false;
-  }
-
-  // 3. excludedCategories -> NONE must match
-  if (e.excludedCategories && e.excludedCategories.length > 0) {
-    const found = categories.some(cat =>
-      e.excludedCategories.includes(cat)
-    );
-    if (found) return false;
-  }
-
-  // 4. minItemsCount
-  if (typeof e.minItemsCount === "number") {
-    if (totalItems < e.minItemsCount) {
-      return false;
-    }
-  }
-
-  return true; // all checks passed
-}
-
-module.exports = {
-  isCouponEligible,
-  computeCartValue
-};
+module.exports = { isCouponEligible };

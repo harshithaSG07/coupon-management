@@ -1,119 +1,191 @@
-// In-memory store
-const { parseISO, isBefore, isAfter } = require('date-fns');
-const { isCouponEligible } = require('../utils/eligibility');
-const { calculateDiscount } = require('../utils/discount');
+const { parseISO, isBefore, isAfter } = require("date-fns");
 
-// In-memory store
+let coupons = [];
+let usagePerUser = {}; // { userId: { couponCode: count } }
 
-const coupons = [];
+// -------------------------
+//  VALIDATION
+// -------------------------
+function validateCouponInput(data) {
+  const requiredFields = [
+    "code",
+    "description",
+    "discountType",
+    "discountValue",
+    "startDate",
+    "endDate",
+    "eligibility"
+  ];
 
-function createCoupon(data) {
-  // Validate required fields
-  if (!data.code) {
-    return { error: "Coupon code is required" };
+  for (let field of requiredFields) {
+    if (!data[field]) {
+      return `Missing field: ${field}`;
+    }
   }
 
-  // Check for duplicate coupon code
-  const exists = coupons.find(coupon => coupon.code === data.code);
-  if (exists) {
-    return { error: "Coupon code must be unique" };
+  if (!["FLAT", "PERCENT"].includes(data.discountType)) {
+    return "Invalid discountType. Use 'FLAT' or 'PERCENT'.";
   }
 
-  // Build coupon object exactly as required by assignment
-  const coupon = {
-    code: data.code,
-    description: data.description || "",
-    discountType: data.discountType,
-    discountValue: data.discountValue,
-    maxDiscountAmount: data.maxDiscountAmount || null,
-    startDate: data.startDate,
-    endDate: data.endDate,
-    usageLimitPerUser: data.usageLimitPerUser || null,
-    eligibility: data.eligibility || {},
+  if (data.discountValue <= 0) {
+    return "discountValue must be positive.";
+  }
 
-    // keep track of user usage
-    usagePerUser: {}
-  };
+  if (data.discountType === "PERCENT" && data.discountValue > 100) {
+    return "Percent discount cannot exceed 100%.";
+  }
 
-  // Save coupon in memory
-  coupons.push(coupon);
+  if (isNaN(Date.parse(data.startDate)) || isNaN(Date.parse(data.endDate))) {
+    return "Invalid startDate or endDate.";
+  }
 
-  return {
-    message: "Coupon created successfully",
-    coupon
-  };
+  return null;
 }
 
-function findBestCoupon(userContext, cart) {
+// -------------------------
+//  CREATE COUPON
+// -------------------------
+function createCoupon(data) {
+  const validationError = validateCouponInput(data);
+  if (validationError) {
+    return { error: validationError };
+  }
+
+  const exists = coupons.find(c => c.code === data.code);
+  if (exists) {
+    return { error: "Coupon code must be unique." };
+  }
+
+  const coupon = {
+    ...data,
+    startDate: parseISO(data.startDate),
+    endDate: parseISO(data.endDate),
+    createdAt: new Date(),
+    usageLimitPerUser: data.usageLimitPerUser || 1,
+  };
+
+  coupons.push(coupon);
+  return coupon;
+}
+
+// -------------------------
+//  ELIGIBILITY CHECK
+// -------------------------
+function isCouponEligible(coupon, user, cartValue, categories, itemsCount) {
   const now = new Date();
 
-  const validCoupons = [];
+  // Date validity
+  if (isBefore(now, coupon.startDate) || isAfter(now, coupon.endDate)) {
+    return false;
+  }
 
-  for (const coupon of coupons) {
+  const e = coupon.eligibility;
 
-    // 1. Check startDate ≤ now ≤ endDate
-    const start = parseISO(coupon.startDate);
-    const end = parseISO(coupon.endDate);
+  if (e.allowedUserTiers && !e.allowedUserTiers.includes(user.userTier)) {
+    return false;
+  }
 
-    if (isAfter(start, now)) continue; // not started
-    if (isBefore(end, now)) continue;  // already ended
+  if (user.lifetimeSpend < e.minLifetimeSpend) return false;
+  if (user.ordersPlaced < e.minOrdersPlaced) return false;
 
-    // 2. Check usage limit per user
-    if (coupon.usageLimitPerUser !== null) {
-      const used = coupon.usagePerUser[userContext.userId] || 0;
-      if (used >= coupon.usageLimitPerUser) continue;
+  if (e.firstOrderOnly && user.ordersPlaced > 0) return false;
+
+  if (e.allowedCountries && !e.allowedCountries.includes(user.country)) {
+    return false;
+  }
+
+  if (cartValue < e.minCartValue) return false;
+
+  if (e.applicableCategories?.length > 0) {
+    const match = categories.some(cat => e.applicableCategories.includes(cat));
+    if (!match) return false;
+  }
+
+  if (e.excludedCategories?.length > 0) {
+    const conflict = categories.some(cat => e.excludedCategories.includes(cat));
+    if (conflict) return false;
+  }
+
+  if (itemsCount < e.minItemsCount) return false;
+
+  // Usage limit check
+  const usedCount = usagePerUser?.[user.userId]?.[coupon.code] || 0;
+  if (usedCount >= coupon.usageLimitPerUser) return false;
+
+  return true;
+}
+
+// -------------------------
+//  DISCOUNT CALCULATION
+// -------------------------
+function calculateDiscount(coupon, cartValue) {
+  if (coupon.discountType === "FLAT") {
+    return coupon.discountValue;
+  }
+
+  if (coupon.discountType === "PERCENT") {
+    let discount = (coupon.discountValue / 100) * cartValue;
+    if (coupon.maxDiscount) {
+      discount = Math.min(discount, coupon.maxDiscount);
     }
+    return discount;
+  }
 
-    // 3. Check all eligibility rules
-    if (!isCouponEligible(coupon, userContext, cart)) {
+  return 0;
+}
+
+// -------------------------
+//  FIND BEST COUPON
+// -------------------------
+function findBestCoupon(userContext, cart) {
+  const cartValue = cart.items.reduce(
+    (sum, item) => sum + item.unitPrice * item.quantity,
+    0
+  );
+
+  const categories = cart.items.map(item => item.category);
+  const itemsCount = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+
+  let best = null;
+
+  for (let c of coupons) {
+    if (!isCouponEligible(c, userContext, cartValue, categories, itemsCount)) {
       continue;
     }
 
-    // 4. Calculate discount
-    const discount = calculateDiscount(coupon, cart);
+    const discount = calculateDiscount(c, cartValue);
     if (discount <= 0) continue;
 
-    validCoupons.push({ coupon, discount });
-  }
-
-  // If no coupons apply
-  if (validCoupons.length === 0) {
-    return { coupon: null, discount: 0 };
-  }
-
-  // Sorting rules:
-  validCoupons.sort((a, b) => {
-    // 1. Highest discount
-    if (b.discount !== a.discount) {
-      return b.discount - a.discount;
+    if (!best) {
+      best = { coupon: c, discount };
+    } else {
+      if (discount > best.discount) {
+        best = { coupon: c, discount };
+      } else if (discount === best.discount) {
+        if (isBefore(c.endDate, best.coupon.endDate)) {
+          best = { coupon: c, discount };
+        } else if (
+          c.endDate.getTime() === best.coupon.endDate.getTime() &&
+          c.code < best.coupon.code
+        ) {
+          best = { coupon: c, discount };
+        }
+      }
     }
-
-    // 2. earliest endDate wins
-    const endA = parseISO(a.coupon.endDate);
-    const endB = parseISO(b.coupon.endDate);
-    if (endA.getTime() !== endB.getTime()) {
-      return endA - endB;
-    }
-
-    // 3. lexicographically smaller code
-    return a.coupon.code.localeCompare(b.coupon.code);
-  });
-
-  const best = validCoupons[0];
-  // Update usage count
-  const userId = userContext.userId;
-  if (!best.coupon.usagePerUser[userId]) {
-    best.coupon.usagePerUser[userId] = 0;
   }
-  best.coupon.usagePerUser[userId] += 1;
 
-  return {
-    coupon: best.coupon,
-    discount: best.discount
-  };
+  if (best) {
+    if (!usagePerUser[userContext.userId]) {
+      usagePerUser[userContext.userId] = {};
+    }
+    usagePerUser[userContext.userId][best.coupon.code] =
+      (usagePerUser[userContext.userId][best.coupon.code] || 0) + 1;
+  }
+
+  return best ? best : null;
 }
 
 module.exports = {
   createCoupon,
-  findBestCoupon
+  findBestCoupon,
 };

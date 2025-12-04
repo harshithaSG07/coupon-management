@@ -1,8 +1,4 @@
-const { computeCartValue } = require('./eligibility');
-
-function calculateDiscount(coupon, cart) {
-  const cartValue = computeCartValue(cart);
-
+function calculateDiscount(coupon, cartValue) {
   if (coupon.discountType === "FLAT") {
     return coupon.discountValue;
   }
@@ -10,8 +6,8 @@ function calculateDiscount(coupon, cart) {
   if (coupon.discountType === "PERCENT") {
     let discount = (coupon.discountValue / 100) * cartValue;
 
-    if (coupon.maxDiscountAmount) {
-      discount = Math.max(0, Math.min(discount, coupon.maxDiscountAmount));
+    if (coupon.maxDiscount) {
+      discount = Math.min(discount, coupon.maxDiscount);
     }
 
     return discount;
